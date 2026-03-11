@@ -1,20 +1,8 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  Put,
-  UseGuards
-} from "@nestjs/common";
+import { Body, Controller, Get, Put, UseGuards } from "@nestjs/common";
 
 import { AccessTokenGuard } from "../auth/access-token.guard";
+import { SaveVaultBodyDto } from "./dto/save-vault.dto";
 import { VaultService } from "./vault.service";
-
-type SaveVaultBody = {
-  envelope?: Record<string, unknown>;
-  expectedRevision: number;
-  contentHash?: string;
-};
 
 @Controller("vault")
 @UseGuards(AccessTokenGuard)
@@ -33,22 +21,15 @@ export class VaultController {
   }
 
   @Put()
-  saveVault(@Body() body: SaveVaultBody): {
+  saveVault(@Body() body: SaveVaultBodyDto): {
     revision: number;
     contentHash: string;
     updatedAt: string;
   } {
-    if (!body.envelope) {
-      throw new BadRequestException("envelope 不能为空");
-    }
-    if (!Number.isInteger(body.expectedRevision) || body.expectedRevision < 0) {
-      throw new BadRequestException("expectedRevision 不合法");
-    }
-
     return this.vaultService.saveVault({
       envelope: body.envelope,
       expectedRevision: body.expectedRevision,
-      contentHash: body.contentHash ?? ""
+      contentHash: body.contentHash
     });
   }
 }

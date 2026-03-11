@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -11,70 +10,42 @@ import {
 import type { Request } from "express";
 
 import { AccessTokenGuard } from "./access-token.guard";
+import {
+  ChangePasswordBodyDto,
+  LoginBodyDto,
+  RefreshBodyDto
+} from "./dto/auth.dto";
 import { AuthService } from "./auth.service";
 import type { AuthenticatedRequest } from "./auth.types";
-
-type LoginBody = {
-  username?: string;
-  password?: string;
-  deviceFingerprint?: string;
-};
-
-type RefreshBody = {
-  refreshToken?: string;
-  deviceFingerprint?: string;
-};
-
-type ChangePasswordBody = {
-  oldPassword?: string;
-  newPassword?: string;
-};
 
 @Controller("auth")
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post("login")
-  async login(@Body() body: LoginBody, @Req() req: Request): Promise<{
+  async login(@Body() body: LoginBodyDto, @Req() req: Request): Promise<{
     accessToken: string;
     refreshToken: string;
     username: string;
   }> {
-    const username = (body.username ?? "").trim();
-    const password = body.password ?? "";
-    const deviceFingerprint = (body.deviceFingerprint ?? "unknown-device").trim();
-
-    if (!username || !password) {
-      throw new BadRequestException("用户名和密码不能为空");
-    }
-
+    const deviceFingerprint = body.deviceFingerprint || "unknown-device";
     const ip = req.ip || req.socket.remoteAddress || "unknown-ip";
-    return this.authService.login(username, password, deviceFingerprint, ip);
+    return this.authService.login(body.username, body.password, deviceFingerprint, ip);
   }
 
   @Post("refresh")
-  async refresh(@Body() body: RefreshBody): Promise<{
+  async refresh(@Body() body: RefreshBodyDto): Promise<{
     accessToken: string;
     refreshToken: string;
     username: string;
   }> {
-    const refreshToken = (body.refreshToken ?? "").trim();
-    const deviceFingerprint = (body.deviceFingerprint ?? "unknown-device").trim();
-    if (!refreshToken) {
-      throw new BadRequestException("refreshToken 不能为空");
-    }
-
-    return this.authService.refresh(refreshToken, deviceFingerprint);
+    const deviceFingerprint = body.deviceFingerprint || "unknown-device";
+    return this.authService.refresh(body.refreshToken, deviceFingerprint);
   }
 
   @Post("logout")
-  logout(@Body() body: RefreshBody): { ok: true } {
-    const refreshToken = (body.refreshToken ?? "").trim();
-    if (!refreshToken) {
-      throw new BadRequestException("refreshToken 不能为空");
-    }
-
-    this.authService.logout(refreshToken);
+  logout(@Body() body: RefreshBodyDto): { ok: true } {
+    this.authService.logout(body.refreshToken);
     return { ok: true };
   }
 
@@ -95,17 +66,9 @@ export class AuthController {
   @UseGuards(AccessTokenGuard)
   async changePassword(
     @Req() req: AuthenticatedRequest,
-    @Body() body: ChangePasswordBody
+    @Body() body: ChangePasswordBodyDto
   ): Promise<{ ok: true }> {
-    const oldPassword = body.oldPassword ?? "";
-    const newPassword = body.newPassword ?? "";
-
-    if (!oldPassword || !newPassword) {
-      throw new BadRequestException("旧密码和新密码不能为空");
-    }
-
-    await this.authService.changePassword(req.user.sub, oldPassword, newPassword);
+    await this.authService.changePassword(req.user.sub, body.oldPassword, body.newPassword);
     return { ok: true };
   }
 }
-

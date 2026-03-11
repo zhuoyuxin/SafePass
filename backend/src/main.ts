@@ -1,5 +1,6 @@
 import "reflect-metadata";
 
+import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 
 import { AppModule } from "./app.module";
@@ -13,13 +14,21 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  // Enable global DTO validation and reject unknown payload fields.
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true
+    })
+  );
+
   app.enableShutdownHooks();
   await app.listen(appConfig.port);
 
-  // 避免在日志中打印敏感配置，只输出必要服务状态。
+  // Avoid logging sensitive config values.
   // eslint-disable-next-line no-console
   console.log(`Backend ready at http://localhost:${appConfig.port}`);
 }
 
 bootstrap();
-

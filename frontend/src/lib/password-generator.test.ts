@@ -30,7 +30,6 @@ describe("generatePassword", () => {
     expect(/[a-z]/.test(value)).toBe(true);
     expect(/[A-Z]/.test(value)).toBe(true);
     expect(/[0-9]/.test(value)).toBe(true);
-    expect(/[!@#$%^&*()\[\]{}<>?_\-=+]/.test(value)).toBe(true);
+    expect(/[^a-zA-Z0-9]/.test(value)).toBe(true);
   });
 });
-

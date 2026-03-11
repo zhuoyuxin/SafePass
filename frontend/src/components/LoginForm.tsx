@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
 
+import { loginSchema } from "../lib/schemas";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Input } from "./ui/input";
@@ -17,10 +18,22 @@ export function LoginForm({
 }: LoginFormProps) {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
+  const [localError, setLocalError] = useState("");
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    await onSubmit(username.trim(), password);
+
+    const parsed = loginSchema.safeParse({
+      username,
+      password
+    });
+    if (!parsed.success) {
+      setLocalError(parsed.error.issues[0]?.message ?? "登录参数不合法");
+      return;
+    }
+
+    setLocalError("");
+    await onSubmit(parsed.data.username, parsed.data.password);
   };
 
   return (
@@ -38,7 +51,12 @@ export function LoginForm({
             <Input
               value={username}
               autoComplete="username"
-              onChange={(event) => setUsername(event.target.value)}
+              onChange={(event) => {
+                setUsername(event.target.value);
+                if (localError) {
+                  setLocalError("");
+                }
+              }}
             />
           </div>
           <div className="space-y-1">
@@ -47,9 +65,15 @@ export function LoginForm({
               type="password"
               value={password}
               autoComplete="current-password"
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                if (localError) {
+                  setLocalError("");
+                }
+              }}
             />
           </div>
+          {localError ? <p className="text-sm text-danger">{localError}</p> : null}
           {error ? <p className="text-sm text-danger">{error}</p> : null}
           <Button disabled={loading} className="w-full" type="submit">
             {loading ? "登录中..." : "登录"}

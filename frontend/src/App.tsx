@@ -1,14 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { LoginForm } from "./components/LoginForm";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { SyncPanel } from "./components/SyncPanel";
 import { VaultEditor } from "./components/VaultEditor";
 import { VaultList } from "./components/VaultList";
+import {
+  type VaultSortOrder,
+  useVaultFilters
+} from "./hooks/use-vault-filters";
+import { useVaultPersistence } from "./hooks/use-vault-persistence";
 import { ApiClient, ApiError } from "./lib/api";
 import { decryptVaultData, encryptVaultData } from "./lib/crypto";
 import { loadLocalEnvelope, saveLocalEnvelope } from "./lib/indexed-db";
 import { generatePassword, type GeneratorOptions } from "./lib/password-generator";
+import {
+  changePasswordSchema,
+  loginSchema,
+  pickFirstIssueMessage,
+  webDavConfigSchema
+} from "./lib/schemas";
 import type {
   EncryptedVaultEnvelope,
   VaultData,
@@ -69,117 +80,37 @@ function App() {
   const [vaultRevision, setVaultRevision] = useState(0);
   const [vaultSalt, setVaultSalt] = useState<string | undefined>(undefined);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
-  const [searchKeyword, setSearchKeyword] = useState("");
-  const [selectedTag, setSelectedTag] = useState("all");
-  const [sortOrder, setSortOrder] = useState<"updated-desc" | "updated-asc">(
-    "updated-desc"
-  );
   const [passwordOptions, setPasswordOptions] = useState<GeneratorOptions>(
     defaultPasswordOptions()
   );
-  const [entryPage, setEntryPage] = useState(1);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    if (!vaultData || !sessionPassword) {
-      return;
-    }
+  const {
+    searchKeyword,
+    selectedTag,
+    sortOrder,
+    entryPage,
+    availableTags,
+    filteredEntries,
+    pagedEntries,
+    totalPages,
+    setEntryPage,
+    applySearchKeyword,
+    applySelectedTag,
+    applySortOrder,
+    resetFilters
+  } = useVaultFilters(vaultData);
 
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        const envelope = await encryptVaultData(
-          vaultData,
-          sessionPassword,
-          vaultSalt
-        );
-        if (!vaultSalt) {
-          setVaultSalt(envelope.kdf.salt);
-        }
-        await saveLocalEnvelope(envelope);
-      })();
-    }, 500);
-
-    return () => window.clearTimeout(timer);
-  }, [vaultData, sessionPassword, vaultSalt]);
+  const { ensureEnvelope } = useVaultPersistence({
+    vaultData,
+    sessionPassword,
+    vaultSalt,
+    setVaultSalt
+  });
 
   const currentEntry =
     vaultData?.entries.find((entry) => entry.id === selectedEntryId) ?? null;
-
-  const availableTags = useMemo(() => {
-    if (!vaultData) {
-      return [];
-    }
-
-    const tagSet = new Set<string>();
-    for (const entry of vaultData.entries) {
-      for (const tag of entry.tags) {
-        if (tag.trim()) {
-          tagSet.add(tag.trim());
-        }
-      }
-    }
-    return Array.from(tagSet).sort((a, b) => a.localeCompare(b, "zh-CN"));
-  }, [vaultData]);
-
-  useEffect(() => {
-    if (selectedTag !== "all" && !availableTags.includes(selectedTag)) {
-      setSelectedTag("all");
-      setEntryPage(1);
-    }
-  }, [availableTags, selectedTag]);
-
-  const filteredEntries = useMemo(() => {
-    if (!vaultData) {
-      return [];
-    }
-
-    const keyword = searchKeyword.trim().toLowerCase();
-    const tag = selectedTag;
-
-    const filtered = vaultData.entries.filter((entry) => {
-      const tagMatched = tag === "all" || entry.tags.includes(tag);
-      if (!tagMatched) {
-        return false;
-      }
-
-      if (!keyword) {
-        return true;
-      }
-
-      const haystack = [
-        entry.title,
-        entry.url,
-        entry.username,
-        entry.note,
-        entry.tags.join(" ")
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(keyword);
-    });
-
-    return filtered.sort((left, right) => {
-      const l = new Date(left.updatedAt).getTime();
-      const r = new Date(right.updatedAt).getTime();
-      const diff = (Number.isFinite(l) ? l : 0) - (Number.isFinite(r) ? r : 0);
-      return sortOrder === "updated-desc" ? -diff : diff;
-    });
-  }, [vaultData, searchKeyword, selectedTag, sortOrder]);
-
-  const pageSize = 12;
-  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / pageSize));
-
-  useEffect(() => {
-    if (entryPage > totalPages) {
-      setEntryPage(totalPages);
-    }
-  }, [entryPage, totalPages]);
-
-  const pagedEntries = useMemo(() => {
-    const start = (entryPage - 1) * pageSize;
-    return filteredEntries.slice(start, start + pageSize);
-  }, [filteredEntries, entryPage]);
 
   const setErrorMessage = (value: string): void => {
     setNotice("");
@@ -189,17 +120,6 @@ function App() {
   const setNoticeMessage = (value: string): void => {
     setError("");
     setNotice(value);
-  };
-
-  const ensureEnvelope = async (): Promise<EncryptedVaultEnvelope> => {
-    if (!vaultData || !sessionPassword) {
-      throw new Error("当前没有可加密的 vault 数据");
-    }
-    const envelope = await encryptVaultData(vaultData, sessionPassword, vaultSalt);
-    if (!vaultSalt) {
-      setVaultSalt(envelope.kdf.salt);
-    }
-    return envelope;
   };
 
   const loadVaultAfterLogin = async (password: string): Promise<void> => {
@@ -216,10 +136,9 @@ function App() {
         setSelectedEntryId(decrypted.entries[0]?.id ?? null);
         await saveLocalEnvelope(remote.envelope);
         return;
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("Remote vault decryption failed, trying local cache.", error);
-        // 改密后若服务端密文未更新，优先回退本地缓存，避免直接锁死访问。
+      } catch (decryptError) {
+        console.warn("Remote vault decryption failed, trying local cache.", decryptError);
+
         const localFallback = await loadLocalEnvelope();
         if (localFallback) {
           const localDecrypted = await decryptVaultData(localFallback, password);
@@ -230,7 +149,7 @@ function App() {
           setVaultSalt(localFallback.kdf.salt);
           setVaultRevision(remote.revision);
           setSelectedEntryId(localDecrypted.entries[0]?.id ?? null);
-          setNoticeMessage("远端密文暂不可解，已使用本地加密缓存加载。");
+          setNoticeMessage("远端密文暂不可解，已回退到本地加密缓存。");
           return;
         }
 
@@ -262,15 +181,26 @@ function App() {
     setLoginLoading(true);
     setError("");
     setNotice("");
+
     try {
-      const result = await api.login(user, password);
-      await loadVaultAfterLogin(password);
+      const parsed = loginSchema.safeParse({ username: user, password });
+      if (!parsed.success) {
+        setErrorMessage(
+          pickFirstIssueMessage(parsed.error.issues, "登录参数不合法")
+        );
+        setIsLoggedIn(false);
+        return;
+      }
+
+      const result = await api.login(parsed.data.username, parsed.data.password);
+      await loadVaultAfterLogin(parsed.data.password);
       setUsername(result.username);
-      setSessionPassword(password);
+      setSessionPassword(parsed.data.password);
       setIsLoggedIn(true);
       setNoticeMessage("登录成功，密码库已解锁。");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "登录失败";
+    } catch (loginError) {
+      const message =
+        loginError instanceof Error ? loginError.message : "登录失败";
       setErrorMessage(message);
       setIsLoggedIn(false);
     } finally {
@@ -296,11 +226,12 @@ function App() {
       const result = await api.saveVault(envelope, vaultRevision);
       setVaultRevision(result.revision);
       setNoticeMessage(`服务端保存成功，revision = ${result.revision}`);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        setErrorMessage("服务端版本冲突，请先确认并同步最新版本后再保存。");
+    } catch (saveError) {
+      if (saveError instanceof ApiError && saveError.status === 409) {
+        setErrorMessage("服务端版本冲突，请先同步最新版本后再保存。");
       } else {
-        const message = e instanceof Error ? e.message : "保存失败";
+        const message =
+          saveError instanceof Error ? saveError.message : "保存失败";
         setErrorMessage(message);
       }
     } finally {
@@ -309,24 +240,27 @@ function App() {
   };
 
   const handleCreateEntry = (): void => {
-    if (!vaultData) return;
+    if (!vaultData) {
+      return;
+    }
+
     const entry = createEntry();
     updateVault({
       ...vaultData,
       entries: [entry, ...vaultData.entries]
     });
-    setSearchKeyword("");
-    setSelectedTag("all");
-    setSortOrder("updated-desc");
-    setEntryPage(1);
+    resetFilters();
     setSelectedEntryId(entry.id);
   };
 
   const handleDeleteEntry = (id: string): void => {
-    if (!vaultData) return;
+    if (!vaultData) {
+      return;
+    }
     if (!window.confirm("确认删除该条目吗？")) {
       return;
     }
+
     const nextEntries = vaultData.entries.filter((entry) => entry.id !== id);
     updateVault({ ...vaultData, entries: nextEntries });
     if (selectedEntryId === id) {
@@ -338,6 +272,7 @@ function App() {
     if (!vaultData) {
       return;
     }
+
     const nextEntries = vaultData.entries.map((entry) =>
       entry.id === nextEntry.id ? nextEntry : entry
     );
@@ -351,14 +286,16 @@ function App() {
     if (!currentEntry) {
       return;
     }
+
     try {
       handleChangeEntry({
         ...currentEntry,
         password: generatePassword(passwordOptions),
         updatedAt: new Date().toISOString()
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "密码生成失败";
+    } catch (generateError) {
+      const message =
+        generateError instanceof Error ? generateError.message : "密码生成失败";
       setErrorMessage(message);
     }
   };
@@ -374,11 +311,17 @@ function App() {
   };
 
   const ensureWebDavConfig = (): WebDavConfig => {
-    const config = vaultData?.webdavConfig;
-    if (!config || !config.url || !config.username || !config.password) {
-      throw new Error("WebDAV 配置不完整");
+    const parsed = webDavConfigSchema.safeParse(vaultData?.webdavConfig);
+    if (!parsed.success) {
+      throw new Error(
+        pickFirstIssueMessage(parsed.error.issues, "WebDAV 配置不完整")
+      );
     }
-    return config;
+
+    return {
+      ...parsed.data,
+      basePath: parsed.data.basePath || "/password-vault"
+    };
   };
 
   const handleWebDavTest = async (): Promise<void> => {
@@ -386,8 +329,9 @@ function App() {
     try {
       await api.webDavTest(ensureWebDavConfig());
       setNoticeMessage("WebDAV 连接成功");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "WebDAV 连接失败";
+    } catch (testError) {
+      const message =
+        testError instanceof Error ? testError.message : "WebDAV 连接失败";
       setErrorMessage(message);
     } finally {
       setBusy(false);
@@ -395,7 +339,9 @@ function App() {
   };
 
   const handleWebDavPull = async (): Promise<void> => {
-    if (!sessionPassword) return;
+    if (!sessionPassword) {
+      return;
+    }
 
     setBusy(true);
     try {
@@ -426,8 +372,9 @@ function App() {
       setVaultSalt(result.envelope.kdf.salt);
       await saveLocalEnvelope(result.envelope);
       setNoticeMessage("已从 WebDAV 拉取并覆盖本地");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "拉取失败";
+    } catch (pullError) {
+      const message =
+        pullError instanceof Error ? pullError.message : "拉取失败";
       setErrorMessage(message);
     } finally {
       setBusy(false);
@@ -459,8 +406,9 @@ function App() {
         lastWebdavSyncHash: localEnvelope.contentHash
       });
       setNoticeMessage("已推送到 WebDAV");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "推送失败";
+    } catch (pushError) {
+      const message =
+        pushError instanceof Error ? pushError.message : "推送失败";
       setErrorMessage(message);
     } finally {
       setBusy(false);
@@ -475,14 +423,15 @@ function App() {
         type: "application/json"
       });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `vault-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
-      a.click();
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `vault-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+      anchor.click();
       URL.revokeObjectURL(url);
       setNoticeMessage("加密备份已导出");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "导出失败";
+    } catch (exportError) {
+      const message =
+        exportError instanceof Error ? exportError.message : "导出失败";
       setErrorMessage(message);
     } finally {
       setBusy(false);
@@ -497,12 +446,11 @@ function App() {
     setBusy(true);
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as {
-        envelope?: EncryptedVaultEnvelope;
-      };
+      const parsed = JSON.parse(text) as { envelope?: EncryptedVaultEnvelope };
       if (!parsed.envelope) {
         throw new Error("备份文件缺少 envelope");
       }
+
       const decrypted = await decryptVaultData(parsed.envelope, sessionPassword);
       setVaultData({
         ...decrypted,
@@ -512,8 +460,9 @@ function App() {
       setVaultSalt(parsed.envelope.kdf.salt);
       await saveLocalEnvelope(parsed.envelope);
       setNoticeMessage("备份已导入，请手动点击“保存到服务端”持久化");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "导入失败";
+    } catch (importError) {
+      const message =
+        importError instanceof Error ? importError.message : "导入失败";
       setErrorMessage(message);
     } finally {
       setBusy(false);
@@ -528,32 +477,40 @@ function App() {
       return;
     }
 
+    const parsed = changePasswordSchema.safeParse({ oldPassword, newPassword });
+    if (!parsed.success) {
+      setErrorMessage(
+        pickFirstIssueMessage(parsed.error.issues, "修改密码参数不合法")
+      );
+      return;
+    }
+
     setBusy(true);
     try {
       // 改密时必须生成新 salt，避免新旧密码派生结果可关联。
-      const reEncrypted = await encryptVaultData(vaultData, newPassword);
-      await api.changePassword(oldPassword, newPassword);
+      const reEncrypted = await encryptVaultData(vaultData, parsed.data.newPassword);
+      await api.changePassword(parsed.data.oldPassword, parsed.data.newPassword);
 
       try {
         const saveResult = await api.saveVault(reEncrypted, vaultRevision);
         setVaultRevision(saveResult.revision);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("Vault save after password change failed.", error);
+      } catch (saveError) {
+        console.warn("Vault save after password change failed.", saveError);
         // 改密已成功但服务端保存失败时，至少保住本地可解密副本，避免数据直接不可读。
         await saveLocalEnvelope(reEncrypted);
         setVaultSalt(reEncrypted.kdf.salt);
-        setSessionPassword(newPassword);
+        setSessionPassword(parsed.data.newPassword);
         setNoticeMessage("密码已修改，但服务端保存失败。已保留本地新密文，请尽快点击“保存到服务端”。");
         return;
       }
 
       setVaultSalt(reEncrypted.kdf.salt);
-      setSessionPassword(newPassword);
+      setSessionPassword(parsed.data.newPassword);
       await saveLocalEnvelope(reEncrypted);
       setNoticeMessage("密码修改成功，vault 已用新密码重加密");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "修改密码失败";
+    } catch (changeError) {
+      const message =
+        changeError instanceof Error ? changeError.message : "修改密码失败";
       setErrorMessage(message);
     } finally {
       setBusy(false);
@@ -564,9 +521,8 @@ function App() {
     setBusy(true);
     try {
       await api.logout();
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.warn("Logout request failed, continue local cleanup.", error);
+    } catch (logoutError) {
+      console.warn("Logout request failed, continue local cleanup.", logoutError);
       // 退出失败不阻塞本地会话清理。
     } finally {
       setBusy(false);
@@ -575,11 +531,8 @@ function App() {
       setVaultData(null);
       setVaultRevision(0);
       setSelectedEntryId(null);
-      setSearchKeyword("");
-      setSelectedTag("all");
-      setSortOrder("updated-desc");
+      resetFilters();
       setPasswordOptions(defaultPasswordOptions());
-      setEntryPage(1);
       setUsername("");
       setVaultSalt(undefined);
       setNotice("");
@@ -601,14 +554,12 @@ function App() {
         <header className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl font-bold">Password Vault</h1>
+              <h1 className="text-xl font-bold">密码保险库</h1>
               <p className="text-sm text-slate-500">
                 当前账号：{username} | 服务端 revision：{vaultRevision}
               </p>
             </div>
-            <p className="text-xs text-slate-500">
-              单用户模式 | 客户端加密 | 无公开注册
-            </p>
+            <p className="text-xs text-slate-500">单用户模式 | 客户端加密 | 无公开注册</p>
           </div>
           {notice ? <p className="mt-2 text-sm text-emerald-700">{notice}</p> : null}
           {error ? <p className="mt-2 text-sm text-danger">{error}</p> : null}
@@ -627,20 +578,13 @@ function App() {
               totalPages={totalPages}
               onCreate={handleCreateEntry}
               onDelete={handleDeleteEntry}
-              onNextPage={() => setEntryPage((prev) => Math.min(totalPages, prev + 1))}
+              onNextPage={() =>
+                setEntryPage((prev) => Math.min(totalPages, prev + 1))
+              }
               onPrevPage={() => setEntryPage((prev) => Math.max(1, prev - 1))}
-              onSearchChange={(value) => {
-                setSearchKeyword(value);
-                setEntryPage(1);
-              }}
-              onTagChange={(value) => {
-                setSelectedTag(value);
-                setEntryPage(1);
-              }}
-              onSortChange={(value) => {
-                setSortOrder(value);
-                setEntryPage(1);
-              }}
+              onSearchChange={applySearchKeyword}
+              onTagChange={applySelectedTag}
+              onSortChange={(value) => applySortOrder(value as VaultSortOrder)}
               onSelect={setSelectedEntryId}
               selectedId={selectedEntryId}
             />
