@@ -216,7 +216,9 @@ function App() {
         setSelectedEntryId(decrypted.entries[0]?.id ?? null);
         await saveLocalEnvelope(remote.envelope);
         return;
-      } catch {
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("Remote vault decryption failed, trying local cache.", error);
         // 改密后若服务端密文未更新，优先回退本地缓存，避免直接锁死访问。
         const localFallback = await loadLocalEnvelope();
         if (localFallback) {
@@ -528,20 +530,25 @@ function App() {
 
     setBusy(true);
     try {
-      const reEncrypted = await encryptVaultData(vaultData, newPassword, vaultSalt);
+      // 改密时必须生成新 salt，避免新旧密码派生结果可关联。
+      const reEncrypted = await encryptVaultData(vaultData, newPassword);
       await api.changePassword(oldPassword, newPassword);
 
       try {
         const saveResult = await api.saveVault(reEncrypted, vaultRevision);
         setVaultRevision(saveResult.revision);
-      } catch {
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("Vault save after password change failed.", error);
         // 改密已成功但服务端保存失败时，至少保住本地可解密副本，避免数据直接不可读。
         await saveLocalEnvelope(reEncrypted);
+        setVaultSalt(reEncrypted.kdf.salt);
         setSessionPassword(newPassword);
         setNoticeMessage("密码已修改，但服务端保存失败。已保留本地新密文，请尽快点击“保存到服务端”。");
         return;
       }
 
+      setVaultSalt(reEncrypted.kdf.salt);
       setSessionPassword(newPassword);
       await saveLocalEnvelope(reEncrypted);
       setNoticeMessage("密码修改成功，vault 已用新密码重加密");
@@ -557,7 +564,9 @@ function App() {
     setBusy(true);
     try {
       await api.logout();
-    } catch {
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("Logout request failed, continue local cleanup.", error);
       // 退出失败不阻塞本地会话清理。
     } finally {
       setBusy(false);

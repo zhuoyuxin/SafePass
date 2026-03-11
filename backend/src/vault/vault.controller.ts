@@ -12,7 +12,7 @@ import { VaultService } from "./vault.service";
 
 type SaveVaultBody = {
   envelope?: Record<string, unknown>;
-  expectedRevision?: number;
+  expectedRevision: number;
   contentHash?: string;
 };
 
@@ -41,12 +41,14 @@ export class VaultController {
     if (!body.envelope) {
       throw new BadRequestException("envelope 不能为空");
     }
+    if (!Number.isInteger(body.expectedRevision) || body.expectedRevision < 0) {
+      throw new BadRequestException("expectedRevision 不合法");
+    }
 
     return this.vaultService.saveVault({
       envelope: body.envelope,
-      expectedRevision: body.expectedRevision ?? -1,
+      expectedRevision: body.expectedRevision,
       contentHash: body.contentHash ?? ""
     });
   }
 }
-

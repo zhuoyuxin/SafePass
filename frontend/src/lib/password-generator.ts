@@ -12,9 +12,20 @@ export interface GeneratorOptions {
 }
 
 const randomInt = (max: number): number => {
+  if (!Number.isInteger(max) || max <= 0) {
+    throw new Error("max must be a positive integer");
+  }
+
+  // 使用拒绝采样消除取模偏差，保证每个索引命中概率一致。
+  const limit = Math.floor(0x100000000 / max) * max;
   const array = new Uint32Array(1);
-  crypto.getRandomValues(array);
-  return array[0] % max;
+  let value = 0;
+  do {
+    crypto.getRandomValues(array);
+    value = array[0];
+  } while (value >= limit);
+
+  return value % max;
 };
 
 const pick = (chars: string): string => chars[randomInt(chars.length)];
@@ -55,4 +66,3 @@ export const generatePassword = (options?: Partial<GeneratorOptions>): string =>
 
   return result.join("");
 };
-

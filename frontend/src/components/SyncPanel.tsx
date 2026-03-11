@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { WebDavConfig } from "../types";
 import { Button } from "./ui/button";
@@ -23,6 +23,10 @@ export function SyncPanel({
   onPush
 }: SyncPanelProps) {
   const [localConfig, setLocalConfig] = useState<WebDavConfig>(config);
+
+  useEffect(() => {
+    setLocalConfig(config);
+  }, [config]);
 
   const commit = (next: WebDavConfig) => {
     setLocalConfig(next);

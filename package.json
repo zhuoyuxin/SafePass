@@ -7,10 +7,10 @@
     "frontend"
   ],
   "scripts": {
-    "install:all": "npm.cmd --workspace backend install && npm.cmd --workspace frontend install",
-    "dev:backend": "npm.cmd --workspace backend run dev",
-    "dev:frontend": "npm.cmd --workspace frontend run dev",
-    "build": "npm.cmd --workspace backend run build && npm.cmd --workspace frontend run build",
-    "test": "npm.cmd --workspace backend run test && npm.cmd --workspace frontend run test"
+    "install:all": "npm --workspace backend install && npm --workspace frontend install",
+    "dev:backend": "npm --workspace backend run dev",
+    "dev:frontend": "npm --workspace frontend run dev",
+    "build": "npm --workspace backend run build && npm --workspace frontend run build",
+    "test": "npm --workspace backend run test && npm --workspace frontend run test"
   }
 }
