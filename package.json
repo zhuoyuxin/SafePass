@@ -1,0 +1,16 @@
+{
+  "name": "password-vault-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "npm.cmd --workspace backend install && npm.cmd --workspace frontend install",
+    "dev:backend": "npm.cmd --workspace backend run dev",
+    "dev:frontend": "npm.cmd --workspace frontend run dev",
+    "build": "npm.cmd --workspace backend run build && npm.cmd --workspace frontend run build",
+    "test": "npm.cmd --workspace backend run test && npm.cmd --workspace frontend run test"
+  }
+}
